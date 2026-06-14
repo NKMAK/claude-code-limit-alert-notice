@@ -16,7 +16,7 @@
 | 両方 | ◎ | ◎ | ~0 |
 
 - 使用量が増えるのは「Claudeがリクエストした時」だけ。Stopフックはまさにその直後に発火する。
-- ただしサブエージェント多用の長いターン（ユーザーの`/usage`では使用の26%）では、
+- ただしサブエージェント多用の長いターンでは、
   1ターンで 40%→95% など一気に進み、Stopフックだと飛び越える。launchdは途中で拾える。
 - 結論：**両方使えるようにしつつ、`.env`でON/OFFを切り替えられる**のが理想。
 
@@ -66,13 +66,15 @@ TRIGGER_HOOK="false"     # Claude Code の Stop フック（応答が返り次�
 
 ## 実装ステップ（チェックリスト）
 
-- [ ] `usage-alert.sh` に `--source` 引数と早期exitロジックを追加
-- [ ] `.env` / `.env.example` に `TRIGGER_LAUNCHD` / `TRIGGER_HOOK` を追加
-- [ ] launchd テンプレートの ProgramArguments を `--source launchd` 付きに
-- [ ] `~/.claude/settings.json` に Stopフック追加（`--source hook`）。install.sh で対応 or 手順化
-- [ ] 動作確認: フラグON/OFFで各トリガーが効く/効かないこと、両方ONでも通知は1回
-- [ ] README / docs/article.md 更新
-- [ ] main へマージ（PR）
+- [x] `usage-alert.sh` に `--source` 引数と早期exitロジックを追加（stdin読み捨ても）
+- [x] `.env` / `.env.example` に `TRIGGER_LAUNCHD` / `TRIGGER_HOOK` を追加
+- [x] launchd テンプレートの ProgramArguments を `--source launchd` 付きに
+- [x] `~/.claude/settings.json` に Stopフック追加（`--source hook`）。install.sh で冪等マージ実装
+- [x] 動作確認: ゲート分岐を全パターンでテスト（launchd/hook/manual × フラグON/OFF）。
+      settings.json マージの冪等性・既存設定保持もサンドボックスで確認。
+      ※「実トリガーからのE2E通知（実際にDiscordへ飛ぶ）」は未実施＝下記の保留タスク。
+- [x] README / docs/article.md 更新
+- [ ] main へマージ（PR） … push/マージはユーザー判断
 
 ## 注意点 / 既知の論点
 
@@ -82,13 +84,15 @@ TRIGGER_HOOK="false"     # Claude Code の Stop フック（応答が返り次�
 
 ## 保留中の未完タスク（本筋とは別）
 
-- [ ] **実通知テスト未実施**: 設定完了済み（TOKEN_BUDGET=26557120, Webhook実値, 現在約92%）。
-      `sh usage-alert.sh` を1回走らせると 50%/80% の通知が実際にDiscordへ飛ぶはず。要確認。
+- [ ] **実通知テスト未実施**: `.env` を設定した状態で
+      `sh usage-alert.sh` を1回走らせると通知が実際にDiscordへ飛ぶはず。要確認。
 - [ ] （セキュリティ）設定中に実Webhook URLがチャットに表示された。気になるなら
       Discord側でWebhook再作成→`.env`更新。
 
-## 現在の状態（ハンドオフ時点 2026-06-14）
+## 現在の状態（更新 2026-06-14）
 
+- `feature/trigger-switch` でトリガー切替の実装が完了（コミット6本）。残るは
+  実トリガーからのE2E通知テストと、main への PR/マージ（ユーザー判断）。
 - main は通知ツール一式が完成・push済み（launchd 5分監視で稼働中）。
-- `.env`（git管理外）に実Webhookと較正済みTOKEN_BUDGETが設定済み。
-- リモート: `https://github.com/NKMAK/NKMAK-claude-code-limit-alert-notice`
+- `.env`（git管理外）に実Webhookと較正済みTOKEN_BUDGETを設定する。
+- リモートURLは公開時のリポジトリ名に合わせる。
