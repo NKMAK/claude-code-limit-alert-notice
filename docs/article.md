@@ -148,6 +148,18 @@ for th in $THRESHOLDS; do
 done
 ```
 
+通知本文はシンプルに、使用率と「5hリセットまでの残り時間」を出す（リセット時刻は
+`blocks[0].endTime` から算出。トークン数や内部閾値は出さない）:
+
+```
+⚠️ Claude 5h使用量が 92% に到達
+5hリセットまで あと約 2.3時間（19:09）
+```
+
+`.env` の `DISCORD_MENTION`（例 `@everyone` / `<@&ロールID>`）を入れると本文先頭に
+メンションが付く。Webhookでロール/@everyoneを実際にpingさせるため、payloadには
+`allowed_mentions:{parse:["roles","users","everyone"]}` を併せて送る。
+
 工夫した点:
 - **多重通知の抑止**: 状態ファイル `~/.claude/.usage-alert-state` に「ブロックID＋発火済み閾値」を記録。
   5hブロックが切り替わったら自動リセット。
