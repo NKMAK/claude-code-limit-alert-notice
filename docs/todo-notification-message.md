@@ -39,3 +39,41 @@
 - [ ] リセット時刻を `endTime` から計算（残り時間＋ローカル時刻表示）
 - [ ] 実際にDiscordへ飛ばして表示確認
 - [ ] README / docs/article.md のメッセージ例を更新
+
+---
+
+## 追加TODO: メンション機能（`.env`で切替）
+
+通知時に Discord で特定ユーザー/ロールをメンション（@）できるようにする。ON/OFFは `.env` で。
+
+### 要件
+- `.env` の設定だけでメンションの有無・対象を切替えられる。
+- 未設定（空）ならメンションなし（現状どおり）。
+
+### 設計案
+- `.env` に追加:
+  ```sh
+  # メンション対象。空ならメンションなし。
+  #   ユーザー: <@123456789012345678>
+  #   ロール:   <@&123456789012345678>
+  #   全員:     @everyone
+  DISCORD_MENTION=""
+  ```
+- `usage-alert.sh` の送信時、`DISCORD_MENTION` が非空なら本文先頭に付与:
+  `content = "$DISCORD_MENTION ⚠️ Claude 5h使用量が..."`
+- **重要**: Webhookでロール/everyoneを実際にpingさせるには payload に `allowed_mentions` が要る。
+  ```sh
+  jq -nc --arg c "$msg" '{content:$c, allowed_mentions:{parse:["roles","users","everyone"]}}'
+  ```
+  （未指定だとロール/everyoneがpingされないことがある）
+- 対象IDの調べ方: Discordで開発者モードON →ユーザ/ロールを右クリック→「IDをコピー」。
+
+### 検討点（任意）
+- 閾値ごとにメンションを変えたい場合（例: 50%は無し、80%だけ@me）は
+  `DISCORD_MENTION_80` のように閾値別キーにする案も。まずは単一でよい。
+
+### チェックリスト
+- [ ] `.env` / `.env.example` に `DISCORD_MENTION` 追加
+- [ ] `usage-alert.sh` で本文への付与＋`allowed_mentions` 対応
+- [ ] ロール/ユーザー/everyone それぞれで実ping確認
+- [ ] README に設定方法（ID取得手順含む）追記
