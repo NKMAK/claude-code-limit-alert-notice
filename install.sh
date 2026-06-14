@@ -28,4 +28,7 @@ launchctl load "$PLIST_DST"
 echo "→ launchd エージェント($LABEL)を登録しました。"
 launchctl list | grep claude-usage-alert || echo "（登録確認に失敗）"
 
-echo "完了。設定後の動作確認: sh $DIR/usage-alert.sh"
+echo "完了。次の2つを設定してください:"
+echo "  1) .env の DISCORD_WEBHOOK_URL に Discord Webhook URL を記入"
+echo "  2) TOKEN_BUDGET を自動算出: /usage の%を見て  sh $DIR/calibrate.sh <%>"
+echo "動作確認: sh $DIR/usage-alert.sh"

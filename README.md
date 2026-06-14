@@ -18,6 +18,7 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 | `local.claude-usage-alert.plist.template` | launchd登録用テンプレート（install.shが実パスを埋めて生成） |
 | `.env.example` | 設定サンプル（`.env` にコピーして使う / Webhook URL・上限トークン） |
 | `install.sh` | 設定配置＋launchd登録の自動化 |
+| `calibrate.sh` | `TOKEN_BUDGET` を自動算出して `.env` に書き込む（`/usage` の数字を1つ渡すだけ） |
 | `docs/article.md` | 記事用のまとめ（背景・調査・設計判断） |
 
 実行時に生成されるファイル（いずれも `.gitignore` 済み）:
@@ -93,15 +94,30 @@ sh usage-alert.sh
 
 ### TOKEN_BUDGET のキャリブレーション（1回だけ）
 
-%の分母にあたる「自分のプランの5h上限トークン数」はAnthropic側が非公開なので、実測で割り出す。
+`TOKEN_BUDGET` は **「5hで使い切れるトークン数の目安」＝あなたにとっての100%**。
+使用率は `消費トークン ÷ TOKEN_BUDGET × 100` で計算される。本物の5h上限は
+Anthropic非公開なので、`/usage` の表示と実トークンを1回だけ突き合わせて逆算する。
 
-1. Claude Code で `/usage` を実行し、現在の5h使用率を確認（例: `30%`）
-2. 現在の消費トークンを取得
-   ```sh
-   npx -y ccusage@latest blocks --active --json | jq '.blocks[0].totalTokens'
-   ```
-3. `TOKEN_BUDGET = totalTokens ÷ (％ / 100)` を設定
-   例) `totalTokens=9837974`, `/usage=30%` → `9837974 / 0.30 ≒ 32793246`
+#### かんたん: `calibrate.sh`（推奨）
+
+数字を1つ入れるだけ。計算と `.env` への書き込みは自動。
+
+```sh
+# 1. Claude Code で /usage を実行し、5h使用率(%)を確認（例: 30）
+# 2. その数字を渡す（対話入力でも可: 引数なしで sh calibrate.sh）
+sh calibrate.sh 30
+# → 現在の消費トークンを ccusage から取得し、TOKEN_BUDGET を計算して .env に保存
+```
+
+#### 手動でやる場合
+
+```sh
+npx -y ccusage@latest blocks --active --json | jq '.blocks[0].totalTokens'
+# TOKEN_BUDGET = totalTokens ÷ (％ / 100)
+# 例) totalTokens=9837974, /usage=30% → 9837974 / 0.30 ≒ 32793246 を .env に記入
+```
+
+> 体感とズレてきたら、また `/usage` を見て `calibrate.sh` を再実行すれば直る。
 
 ---
 
