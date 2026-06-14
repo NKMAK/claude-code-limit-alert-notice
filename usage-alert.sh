@@ -1,7 +1,9 @@
 #!/bin/sh
 # Claude Code の直近5hブロック使用量を ccusage で集計し、
 # 設定した閾値(50/80%)を超えたら Discord Webhook に通知する。
-# launchd から定期実行される想定。全セッション分のログを合算するため
+# launchd（定期実行）または Stop フック（応答直後）から呼ばれる想定。
+# どのトリガーで実際に動くかは .env の TRIGGER_LAUNCHD / TRIGGER_HOOK で切替える
+# （呼び出し元は --source で受け取る）。全セッション分のログを合算するため
 # 同一マシン上の複数セッションはまとめて評価される。
 #
 # 設定の渡し方（優先順位の高い順）:
@@ -11,6 +13,23 @@
 # .env / conf は .gitignore 済みでリポジトリに含めない。
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
+# 呼び出し元(source)を判定する。既定は manual（手動/テスト）。
+#   --source launchd : 5分ごとの定期実行（.env の TRIGGER_LAUNCHD で有効/無効）
+#   --source hook    : Claude Code の Stop フック（.env の TRIGGER_HOOK で有効/無効）
+#   --source manual  : 人間が直接実行。フラグに関係なく常に動く（テスト用の抜け道）
+SOURCE="manual"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --source) SOURCE="$2"; shift 2 ;;
+    --source=*) SOURCE="${1#*=}"; shift ;;
+    *) shift ;;
+  esac
+done
+
+# Stopフックは stdin に JSON を渡してくる。本ツールは使わないので読み捨てる
+# （端末からの手動実行時は stdin がttyなので読まない）。
+[ -t 0 ] || cat >/dev/null 2>&1
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/.env"
@@ -26,6 +45,17 @@ fi
 [ -n "$_pre_webhook" ] && DISCORD_WEBHOOK_URL="$_pre_webhook"
 [ -n "$_pre_budget" ]  && TOKEN_BUDGET="$_pre_budget"
 [ -n "$_pre_th" ]      && THRESHOLDS="$_pre_th"
+
+# トリガー別のON/OFFを .env のフラグで判定する。
+# 未設定時の既定: launchd=ON（従来動作の互換）, hook=OFF。
+# 該当トリガーが無効なら、判定すらせず黙って終了する（呼び出し側は両方が常に
+# このスクリプトを叩くが、実際に動くかはここで決まる）。manual は常に実行。
+: "${TRIGGER_LAUNCHD:=true}"
+: "${TRIGGER_HOOK:=false}"
+case "$SOURCE" in
+  launchd) [ "$TRIGGER_LAUNCHD" = "true" ] || exit 0 ;;
+  hook)    [ "$TRIGGER_HOOK" = "true" ]    || exit 0 ;;
+esac
 
 # 設定が未完なら何もしない（誤通知防止）
 [ -n "$DISCORD_WEBHOOK_URL" ] || exit 0
