@@ -1,0 +1,25 @@
+# Claude Code 5h使用量アラート 設定ファイルのテンプレート
+#
+# 設定方法は2通り。どちらでもよい:
+#   (A) このファイルを ~/.claude/usage-alert.conf にコピーして編集
+#         cp usage-alert.conf.example ~/.claude/usage-alert.conf
+#       （別の場所に置くなら環境変数 USAGE_ALERT_CONF でパスを指定）
+#   (B) 設定ファイルを作らず、環境変数で直接渡す
+#         export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
+#         export TOKEN_BUDGET=32793246
+# 秘匿情報(Webhook URL)を含むためリポジトリには実体を置かない。
+
+# Discord の Webhook URL（必須）
+DISCORD_WEBHOOK_URL=""
+
+# 5hウィンドウあたりの上限トークン数（必須・要キャリブレーション）
+# 求め方:
+#   1) Claude Code で /usage を実行し、現在の5h使用率(%)を見る（例: 30）
+#   2) 現在の消費トークンを確認:
+#        npx -y ccusage@latest blocks --active --json | jq '.blocks[0].totalTokens'
+#   3) TOKEN_BUDGET = totalTokens ÷ (％/100)
+#      例: totalTokens=9837974, /usage=30% なら 9837974 / 0.30 ≒ 32793246
+TOKEN_BUDGET=""
+
+# 通知する閾値（スペース区切り・%）。各5hブロックで1回ずつ通知。
+THRESHOLDS="50 80"

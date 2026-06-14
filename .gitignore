@@ -1,0 +1,6 @@
+# 秘匿情報・実行時生成物（リポジトリに含めない）
+usage-alert.conf
+.usage-alert-state
+.usage-alert.log
+.usage-alert.lock.d/
+.DS_Store

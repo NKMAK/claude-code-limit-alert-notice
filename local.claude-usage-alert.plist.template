@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  テンプレート。install.sh が __INSTALL_DIR__ と __HOME__ を実パスに置換して
+  ~/Library/LaunchAgents/local.claude-usage-alert.plist を生成する。
+  launchd は plist 内で $HOME や ~ を展開しないため、絶対パスを埋め込む必要がある。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.claude-usage-alert</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>__INSTALL_DIR__/usage-alert.sh</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.claude/.usage-alert.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.claude/.usage-alert.log</string>
+</dict>
+</plist>

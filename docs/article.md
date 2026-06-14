@@ -1,0 +1,144 @@
+# Claude Code の5時間使用量が50%/80%に達したらDiscordに通知する仕組みを作る
+
+## やりたかったこと
+
+Claude Code には「5時間のローリング使用制限」がある。これに **50% / 80% で気づきたい**。
+検知さえできれば通知手段は何でもよい（今回は Discord Webhook）。
+
+ゴールを2つに分けて検証した。
+
+1. **特定の%を検知できるか？**
+2. **検知できたら通知をフックできるか？**
+
+---
+
+## 調査：使用量はどこから取れるのか
+
+### hook には「使用量◯%到達」イベントは無い
+
+Claude Code の hook はライフサイクルイベント（SessionStart / Stop / PreToolUse など）のみで、
+「使用量が閾値に達した」というトリガーは存在しない。
+
+### `/usage` の正確な%はローカルに落ちていない
+
+`~/.claude` を調べたが、`/usage` が表示する**サーバー側の正確な5h%をそのまま読めるファイルは無かった**。
+
+- `~/.claude/.claude.json` … `organizationRateLimitTier` や `planLimitsEndDate` などプラン情報はあるが、ライブの消費カウンタは無い
+- `~/.claude/usage-data/` … 過去のレポート（HTML）であり、リアルタイム値ではない
+
+### ただしトークン実績は全部ログに残っている
+
+`~/.claude/projects/**/*.jsonl` に、全リクエストの `usage`（input / output / cache 各トークン）が
+タイムスタンプ付きで記録されている。**ここから5hウィンドウの消費を集計できる。**
+
+その集計を一発でやってくれるのが **[ccusage](https://github.com/ryoppippi/ccusage)**（第三者製npmツール）。
+
+```sh
+npx -y ccusage@latest blocks --active --json
+```
+
+出力に `totalTokens`（現在の5hブロックの合計トークン）が含まれる。
+ただし `usagePercent` のような%フィールドは無いので、%は自分で計算する。
+
+---
+
+## 検証ポイント：複数セッションを同時に動かしても正確か
+
+**結論：同一マシンの複数セッションはむしろ正しく合算される。**
+
+- 5h制限は**セッション単位ではなくアカウント単位**
+- 各セッションは別々の `.jsonl` に書くが、ccusage は `~/.claude/projects/**` を全スキャンして
+  時刻で5hブロックに束ねる → 全セッションのトークンが自動で合算される
+- サブエージェント（Taskツール）の消費も `isSidechain` 付きでカウントされる
+
+### 本当の死角は別経路の消費
+
+| 消費経路 | ローカルログに残るか |
+|---|---|
+| 同マシンの別CCセッション | ✅ 残る（合算OK） |
+| 別PCのClaude Code | ❌ 残らない |
+| claude.ai(Web) / デスクトップ / モバイル | ❌ 残らない |
+| API直叩き | ❌ 残らない |
+
+これらは同じ5hアカウント制限を食うのにローカルに痕跡が残らないため、**併用していると過少カウント**になる。
+これが「`/usage` と完全一致しない」理由でもある。
+
+---
+
+## %の分母問題とキャリブレーション
+
+`%= totalTokens ÷ 5h上限トークン` で出すが、**分母（プランの実上限）はAnthropic非公開**。
+そこで1回だけ実測で割り出す。
+
+1. `/usage` で現在の使用率を見る（例: 30%）
+2. `ccusage ... | jq '.blocks[0].totalTokens'` で現在の消費トークンを取る
+3. `上限 = totalTokens ÷ (％/100)` を設定値にする
+
+近似だが、50%/80%アラートには十分実用的。
+
+---
+
+## 設計判断：なぜ hook ではなく launchd か
+
+最初は「Stop フック（応答ごとに発火）」を検討したが、launchd の定期実行に切り替えた。
+
+| 観点 | Stopフック | launchd（採用） |
+|---|---|---|
+| 発火タイミング | 応答を受け取った瞬間のみ | 5分おきに常時 |
+| 席を外して放置中 | ❌ 発火しない＝気づかず上限到達 | ✅ 検知できる |
+| 応答速度 | hook内でccusage実行＝毎回の返答に遅延 | ✅ 裏で動くので無影響 |
+| 複数セッション | 担当・重複通知の調整が要る | ✅ 監視役は1つでシンプル |
+
+決め手は「**上限が近いときこそ席を外す / 長い処理を回しっぱなしにしがち**」という点。
+その状況で沈黙する Stop フックはアラートの目的（事前に気づく）と噛み合わない。
+
+> launchd … macOS標準のサービス/スケジューラ管理（Linuxのcron/systemd相当）。
+> `~/Library/LaunchAgents/*.plist` に設定を置くと、指定スクリプトを定期実行・常駐させられる。
+
+---
+
+## 実装
+
+### 1. 監視スクリプト `usage-alert.sh`（要点）
+
+```sh
+json=$(npx -y ccusage@latest blocks --active --json)
+block_id=$(echo "$json" | jq -r '.blocks[0].id')
+total=$(echo "$json" | jq -r '.blocks[0].totalTokens')
+pct=$(awk -v t="$total" -v b="$TOKEN_BUDGET" 'BEGIN{printf "%.0f", t*100/b}')
+
+# 状態ファイルでブロックごとに各閾値1回だけ通知（5hブロックが変わればリセット）
+for th in $THRESHOLDS; do
+  if [ "$pct" -ge "$th" ] && ! 既に発火済み; then
+    curl -H "Content-Type: application/json" \
+      -d "$(jq -nc --arg c "$msg" '{content:$c}')" "$DISCORD_WEBHOOK_URL"
+  fi
+done
+```
+
+工夫した点:
+- **多重通知の抑止**: 状態ファイル `~/.claude/.usage-alert-state` に「ブロックID＋発火済み閾値」を記録。
+  5hブロックが切り替わったら自動リセット。
+- **多重起動の抑止**: macOSに `flock` が無いので `mkdir`（アトミック）でロック。
+- **誤通知防止**: Webhook URL や上限トークンが未設定なら何もせず終了。
+- **秘匿情報の分離**: Webhook URL を含む設定は `~/.claude/usage-alert.conf` に置き、リポジトリ外にする。
+
+### 2. launchd 登録 `*.plist`
+
+`StartInterval = 300`（5分）、`RunAtLoad = true` で常駐。
+
+```sh
+launchctl load ~/Library/LaunchAgents/local.claude-usage-alert.plist
+```
+
+---
+
+## まとめ
+
+- **特定%の検知**：hookのイベントには無いが、JSONLログ＋ccusageで5hブロックの消費を集計すれば可能
+- **通知**：launchdで5分おきに監視し、閾値到達でDiscord Webhookへ
+- **複数セッション**：同一マシンなら自動で合算されるので問題なし
+- **限界**：Web/別PC/アプリ/API併用分は拾えず過少／%はキャリブレーションの近似
+
+「公式 `/usage` と寸分違わぬ値」は現状の露出範囲では取れないが、
+**自分のマシンのCC消費を対象にした“事前アラート”としては十分実用的**に作れる。
