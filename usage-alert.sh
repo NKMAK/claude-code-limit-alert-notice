@@ -86,9 +86,25 @@ json=$("$CCUSAGE" blocks --active --json --offline --since "$SINCE" 2>/dev/null)
 
 block_id=$(printf '%s' "$json" | jq -r '.blocks[0].id // empty')
 total=$(printf '%s' "$json" | jq -r '.blocks[0].totalTokens // 0')
+end_time=$(printf '%s' "$json" | jq -r '.blocks[0].endTime // empty')
 [ -n "$block_id" ] || exit 0   # アクティブな5hブロックなし
 
 pct=$(awk -v t="$total" -v b="$TOKEN_BUDGET" 'BEGIN{ printf "%.0f", t*100/b }')
+
+# 5hブロック終了(=リセット)までの残り時間を計算する。
+# endTime は UTC の ISO8601 (例 "2026-06-14T10:00:00.000Z")。ミリ秒/Zを落として
+# UTC としてepoch化し、現在との差から「あと約N時間」とローカル時刻(Asia/Tokyo)を作る。
+reset_info=""
+if [ -n "$end_time" ]; then
+  end_base="${end_time%.*}"; end_base="${end_base%Z}"
+  end_epoch=$(date -ju -f "%Y-%m-%dT%H:%M:%S" "$end_base" +%s 2>/dev/null)
+  now_epoch=$(date +%s)
+  if [ -n "$end_epoch" ] && [ "$end_epoch" -gt "$now_epoch" ]; then
+    remain_h=$(awk -v e="$end_epoch" -v n="$now_epoch" 'BEGIN{ printf "%.1f", (e-n)/3600 }')
+    local_hm=$(date -r "$end_epoch" +%H:%M 2>/dev/null)
+    reset_info="5hリセットまで あと約 ${remain_h}時間（${local_hm}）"
+  fi
+fi
 
 # 状態ファイル形式: "<blockId> <発火済み閾値カンマ区切り>"
 saved_id=$(cut -d' ' -f1 "$STATE" 2>/dev/null)
@@ -98,8 +114,11 @@ saved_fired=$(cut -d' ' -f2 "$STATE" 2>/dev/null)
 fired="$saved_fired"
 for th in $THRESHOLDS; do
   if [ "$pct" -ge "$th" ] 2>/dev/null && ! printf ',%s,' "$fired" | grep -q ",$th,"; then
-    msg=$(printf '⚠️ Claude 5h使用量が **%s%%** に到達 (閾値 %s%%)\nトークン: %s / %s\n残り: あと %s%% でリセットまで継続' \
-      "$pct" "$th" "$total" "$TOKEN_BUDGET" "$((100 - pct))")
+    # 本文: 使用率＋（取得できれば）リセットまでの残り時間。
+    # トークン数・閾値の表記は出さない。
+    msg="⚠️ Claude 5h使用量が ${pct}% に到達"
+    [ -n "$reset_info" ] && msg="$msg
+$reset_info"
     curl -fsS -m 10 -H "Content-Type: application/json" \
       -d "$(jq -nc --arg c "$msg" '{content:$c}')" \
       "$DISCORD_WEBHOOK_URL" >/dev/null 2>&1
