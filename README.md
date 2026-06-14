@@ -2,7 +2,9 @@
 
 Claude Code の **5時間ローリング使用量**が一定の割合（既定では 50% / 80%）に達したら **Discord に通知**する仕組み。
 
-- 監視は **launchd**（macOS標準のスケジューラ）が5分おきに実行
+- 監視のトリガーは2種類。**`.env` のフラグで個別にON/OFF**できる（両方ON可）
+  - **launchd**（macOS標準のスケジューラ）が5分おきに実行 … 長いターンの途中でも拾える
+  - Claude Code の **Stop フック** … 応答が返り次第その場で判定（即時性が高い）
 - 使用量の集計は **[ccusage](https://github.com/ryoppippi/ccusage)**（第三者製のnpmツール）を利用
 - 同一マシン上の**全セッション分のログを合算**して評価する
 
@@ -58,6 +60,7 @@ cd claude-usage-discord-alert
 #    - スクリプトに実行権限付与
 #    - .env を .env.example から作成（既存なら上書きしない）
 #    - テンプレートから実パスを埋めた plist を ~/Library/LaunchAgents/ に生成し launchd へ登録
+#    - ~/.claude/settings.json の Stop フックに登録（TRIGGER_HOOK=true で有効化）
 sh install.sh
 ```
 
@@ -79,6 +82,8 @@ cp .env.example .env   # install.sh 実行済みなら作成済み
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 TOKEN_BUDGET="32793246"      # ← 下記キャリブレーションで算出
 THRESHOLDS="50 80"           # 通知する割合（%）
+TRIGGER_LAUNCHD="true"       # 5分ごとの定期実行で判定する
+TRIGGER_HOOK="false"         # Stopフック（応答直後）で判定する
 ```
 
 > launchd の定期実行はシェルの環境変数を引き継がないため、常駐運用では**この方式が確実**。
@@ -124,6 +129,46 @@ node_modules/.bin/ccusage blocks --active --json --offline --since $(date -v-1d 
 
 ---
 
+## トリガーの切替（launchd / Stopフック）
+
+判定スクリプトを「いつ」走らせるかを、`.env` のフラグで切り替えられる。
+`install.sh` は launchd と Stopフックの**両方を登録**するが、実際に動くかは
+このフラグで決まる（設定変更のたびに launchd の load/unload や settings.json の
+編集をやり直さなくて済む）。
+
+```sh
+TRIGGER_LAUNCHD="true"    # 5分ごとの定期実行（launchd）
+TRIGGER_HOOK="false"      # Claude Code の Stop フック（応答が返り次第）
+```
+
+| 方式 | 即時性 | 長いターンの途中で閾値通過を捕捉 | コスト |
+|---|---|---|---|
+| `TRIGGER_LAUNCHD` のみ | △（最大5分） | ◎ | ~0 |
+| `TRIGGER_HOOK` のみ | ◎（応答直後） | ✕（ターン終了後にしか見ない＝飛び越え得る） | ~0 |
+| 両方ON | ◎ | ◎ | ~0 |
+
+- サブエージェント多用の長いターンでは1ターンで一気に%が進み、Stopフック単体だと
+  飛び越えることがある。launchd は途中でも拾えるので、**両方ON が最も取りこぼしにくい**。
+- 両方ONでも、状態ファイル＋ロックにより通知は**各閾値につき1回**。
+- フラグ変更は再読込不要。`.env` を保存すれば次回起動から反映される。
+- 手動実行（`sh usage-alert.sh`）はフラグに関係なく常に判定する（テスト用）。
+
+> Stopフックは `install.sh` が `~/.claude/settings.json` の `hooks.Stop` に
+> `usage-alert.sh --source hook` を冪等に登録する。手動で登録する場合は次を追記:
+>
+> ```json
+> {
+>   "hooks": {
+>     "Stop": [
+>       { "hooks": [ { "type": "command",
+>         "command": "sh /path/to/claude-usage-discord-alert/usage-alert.sh --source hook" } ] }
+>     ]
+>   }
+> }
+> ```
+
+---
+
 ## 使い方・動作確認
 
 設定が済めば、あとは **launchd が5分おきに自動チェック**するので操作は不要。閾値（50% / 80%）に達した時点で Discord に通知が届く。各閾値は **5hブロックごとに1回だけ**通知し、ブロックが切り替われば自動でリセットされる。
@@ -152,6 +197,10 @@ THRESHOLDS="1" sh usage-alert.sh        # env方式。1%で発火するので必
 launchctl unload ~/Library/LaunchAgents/local.claude-usage-alert.plist
 rm ~/Library/LaunchAgents/local.claude-usage-alert.plist
 ```
+
+Stopフックも外す場合は `~/.claude/settings.json` の `hooks.Stop` から
+`usage-alert.sh --source hook` のエントリを削除する（または一時的に止めたいだけ
+なら `.env` で `TRIGGER_HOOK="false"`）。
 
 ---
 
