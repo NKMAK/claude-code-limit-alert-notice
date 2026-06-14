@@ -22,8 +22,12 @@ fi
 case "$pct" in ''|*[!0-9]*) echo "エラー: 1〜99 の整数で入力してください（例: 30）"; exit 1;; esac
 [ "$pct" -ge 1 ] && [ "$pct" -le 99 ] || { echo "エラー: 1〜99 の範囲で入力してください"; exit 1; }
 
+CCUSAGE="$DIR/node_modules/.bin/ccusage"
+[ -x "$CCUSAGE" ] || { echo "エラー: ccusage未導入。$DIR で 'npm install' を実行してください"; exit 1; }
+SINCE=$(date -v-1d +%Y%m%d 2>/dev/null || date +%Y%m%d)
+
 echo "ccusage で現在の消費トークンを取得中..."
-total=$(npx -y ccusage@latest blocks --active --json 2>/dev/null | jq -r '.blocks[0].totalTokens // empty')
+total=$("$CCUSAGE" blocks --active --json --offline --since "$SINCE" 2>/dev/null | jq -r '.blocks[0].totalTokens // empty')
 [ -n "$total" ] || { echo "エラー: アクティブな5hブロックがありません。Claude Codeを少し使ってから再実行してください。"; exit 1; }
 
 budget=$(awk -v t="$total" -v p="$pct" 'BEGIN{ printf "%d", t*100/p }')

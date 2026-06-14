@@ -1,3 +1,6 @@
+# 依存（初回 npm install で取得）
+node_modules/
+
 # 秘匿情報・実行時生成物（リポジトリに含めない）
 .env
 usage-alert.conf

@@ -19,6 +19,7 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 | `.env.example` | 設定サンプル（`.env` にコピーして使う / Webhook URL・上限トークン） |
 | `install.sh` | 設定配置＋launchd登録の自動化 |
 | `calibrate.sh` | `TOKEN_BUDGET` を自動算出して `.env` に書き込む（`/usage` の数字を1つ渡すだけ） |
+| `package.json` | `ccusage` を**固定バージョン**で管理（`npm install` で初回取得） |
 | `docs/article.md` | 記事用のまとめ（背景・調査・設計判断） |
 
 実行時に生成されるファイル（いずれも `.gitignore` 済み）:
@@ -34,7 +35,8 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 ## 前提条件
 
 - **macOS**（スケジューラに launchd を使用）
-- **Node.js / npx**（`ccusage` を `npx` 経由で実行。`node -v` で確認）
+- **Node.js / npm**（`ccusage` を**固定バージョンでローカル導入**。`node -v` で確認）
+  - 初回 `npm install`（= `install.sh`）で1度だけ取得。以後はネット不要・自動更新なし。
 - **jq**（JSON処理。`jq --version` で確認。無ければ `brew install jq`）
 - **curl**（macOS標準で同梱）
 - **Claude Code** を当該マシンで使用していること（`~/.claude/projects/**` にログが溜まる）
@@ -52,7 +54,8 @@ git clone <このリポジトリのURL> claude-usage-discord-alert
 cd claude-usage-discord-alert
 
 # 2. インストール
-#    - usage-alert.sh に実行権限付与
+#    - 固定バージョンの ccusage を npm install（初回のみネット使用）
+#    - スクリプトに実行権限付与
 #    - .env を .env.example から作成（既存なら上書きしない）
 #    - テンプレートから実パスを埋めた plist を ~/Library/LaunchAgents/ に生成し launchd へ登録
 sh install.sh
@@ -112,7 +115,7 @@ sh calibrate.sh 30
 #### 手動でやる場合
 
 ```sh
-npx -y ccusage@latest blocks --active --json | jq '.blocks[0].totalTokens'
+node_modules/.bin/ccusage blocks --active --json --offline --since $(date -v-1d +%Y%m%d) | jq '.blocks[0].totalTokens'
 # TOKEN_BUDGET = totalTokens ÷ (％ / 100)
 # 例) totalTokens=9837974, /usage=30% → 9837974 / 0.30 ≒ 32793246 を .env に記入
 ```

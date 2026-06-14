@@ -10,7 +10,11 @@ ENV_FILE="$DIR/.env"
 TEMPLATE="$DIR/local.claude-usage-alert.plist.template"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-chmod +x "$DIR/usage-alert.sh"
+chmod +x "$DIR/usage-alert.sh" "$DIR/calibrate.sh"
+
+# 固定バージョンの ccusage を初回のみ取得（以後ネット不要・自動更新なし）
+echo "→ 依存(ccusage 固定版)をインストール中..."
+( cd "$DIR" && npm install --no-audit --no-fund )
 
 if [ ! -f "$ENV_FILE" ]; then
   cp "$DIR/.env.example" "$ENV_FILE"

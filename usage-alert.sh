@@ -37,7 +37,14 @@ case "$TOKEN_BUDGET" in ''|*[!0-9]*) exit 0 ;; esac
 mkdir "$LOCKDIR" 2>/dev/null || exit 0
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
-json=$(npx -y ccusage@latest blocks --active --json 2>/dev/null)
+# 固定バージョンのローカル ccusage を使用（npxの毎回更新・ネット問い合わせを排除）。
+# --offline: 料金データ取得をしない（本ツールはtotalTokensしか使わない）
+# --since 昨日: 走査対象を直近に限定（履歴肥大対策）
+CCUSAGE="$SCRIPT_DIR/node_modules/.bin/ccusage"
+[ -x "$CCUSAGE" ] || { echo "ccusage未導入: $SCRIPT_DIR で 'npm install' を実行してください" >&2; exit 0; }
+SINCE=$(date -v-1d +%Y%m%d 2>/dev/null || date +%Y%m%d)
+
+json=$("$CCUSAGE" blocks --active --json --offline --since "$SINCE" 2>/dev/null)
 [ -n "$json" ] || exit 0
 
 block_id=$(printf '%s' "$json" | jq -r '.blocks[0].id // empty')
