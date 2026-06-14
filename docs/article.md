@@ -121,7 +121,7 @@ done
   5hブロックが切り替わったら自動リセット。
 - **多重起動の抑止**: macOSに `flock` が無いので `mkdir`（アトミック）でロック。
 - **誤通知防止**: Webhook URL や上限トークンが未設定なら何もせず終了。
-- **秘匿情報の分離**: Webhook URL を含む設定は `~/.claude/usage-alert.conf` に置き、リポジトリ外にする。
+- **秘匿情報の分離**: Webhook URL を含む設定は `.env`（`.gitignore` 済み）に置き、リポジトリに含めない。
 
 ### 2. launchd 登録 `*.plist`
 

@@ -4,19 +4,28 @@
 # launchd から定期実行される想定。全セッション分のログを合算するため
 # 同一マシン上の複数セッションはまとめて評価される。
 #
-# 設定: 環境変数で直接渡すか、設定ファイル(既定 ~/.claude/usage-alert.conf)で渡す。
-#   - DISCORD_WEBHOOK_URL / TOKEN_BUDGET / THRESHOLDS を env で export しておけばそれを使う
-#   - 設定ファイルの場所は USAGE_ALERT_CONF で上書き可能
-# 秘匿情報(Webhook URL)はリポジトリに含めない。
+# 設定の渡し方（優先順位の高い順）:
+#   1. 既に export 済みの環境変数（DISCORD_WEBHOOK_URL / TOKEN_BUDGET / THRESHOLDS）
+#   2. スクリプトと同じ場所の .env ファイル（.env.example をコピーして作る）
+#   3. 互換: ~/.claude/usage-alert.conf（USAGE_ALERT_CONF で場所を変更可）
+# .env / conf は .gitignore 済みでリポジトリに含めない。
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/.env"
 CONF="${USAGE_ALERT_CONF:-$HOME/.claude/usage-alert.conf}"
 STATE="$HOME/.claude/.usage-alert-state"
 LOCKDIR="$HOME/.claude/.usage-alert.lock.d"
 
-# 設定ファイルがあれば読む（無ければ環境変数だけで動作）
-[ -f "$CONF" ] && . "$CONF"
+# 既存の環境変数を最優先にしつつ、未設定分を .env → conf の順で補完する
+_pre_webhook="$DISCORD_WEBHOOK_URL"; _pre_budget="$TOKEN_BUDGET"; _pre_th="$THRESHOLDS"
+if [ -f "$ENV_FILE" ]; then . "$ENV_FILE"
+elif [ -f "$CONF" ]; then . "$CONF"
+fi
+[ -n "$_pre_webhook" ] && DISCORD_WEBHOOK_URL="$_pre_webhook"
+[ -n "$_pre_budget" ]  && TOKEN_BUDGET="$_pre_budget"
+[ -n "$_pre_th" ]      && THRESHOLDS="$_pre_th"
 
 # 設定が未完なら何もしない（誤通知防止）
 [ -n "$DISCORD_WEBHOOK_URL" ] || exit 0

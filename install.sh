@@ -1,22 +1,22 @@
 #!/bin/sh
 # セットアップスクリプト:
-#  - 設定ファイルを ~/.claude/usage-alert.conf に用意（env管理する場合は不要）
+#  - .env を雛形(.env.example)から用意（env変数で直接渡すなら不要）
 #  - テンプレートから実パスを埋めて plist を生成し launchd に登録（5分おきに監視）
 set -e
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 LABEL="local.claude-usage-alert"
-CONF="${USAGE_ALERT_CONF:-$HOME/.claude/usage-alert.conf}"
+ENV_FILE="$DIR/.env"
 TEMPLATE="$DIR/local.claude-usage-alert.plist.template"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 chmod +x "$DIR/usage-alert.sh"
 
-if [ ! -f "$CONF" ]; then
-  cp "$DIR/usage-alert.conf.example" "$CONF"
-  echo "→ $CONF を作成しました。DISCORD_WEBHOOK_URL と TOKEN_BUDGET を設定してください。"
+if [ ! -f "$ENV_FILE" ]; then
+  cp "$DIR/.env.example" "$ENV_FILE"
+  echo "→ $ENV_FILE を作成しました。DISCORD_WEBHOOK_URL と TOKEN_BUDGET を設定してください。"
 else
-  echo "→ $CONF は既に存在（上書きしません）。"
+  echo "→ $ENV_FILE は既に存在（上書きしません）。"
 fi
 
 # テンプレートのプレースホルダを実パスに置換して plist 生成

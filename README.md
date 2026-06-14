@@ -16,15 +16,15 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 |---|---|
 | `usage-alert.sh` | 本体。ccusageで5h消費トークンを取得→閾値判定→Discord通知 |
 | `local.claude-usage-alert.plist.template` | launchd登録用テンプレート（install.shが実パスを埋めて生成） |
-| `usage-alert.conf.example` | 設定テンプレート（Webhook URL・上限トークン） |
+| `.env.example` | 設定サンプル（`.env` にコピーして使う / Webhook URL・上限トークン） |
 | `install.sh` | 設定配置＋launchd登録の自動化 |
 | `docs/article.md` | 記事用のまとめ（背景・調査・設計判断） |
 
-実行時のファイル（リポジトリ外 = `~/.claude/`）:
+実行時に生成されるファイル（いずれも `.gitignore` 済み）:
 
 | パス | 役割 |
 |---|---|
-| `~/.claude/usage-alert.conf` | 設定の実体（**Webhook URLを含むので非git管理**） |
+| `.env` | 設定の実体（**Webhook URLを含むので非git管理**。`.env.example` からコピー） |
 | `~/.claude/.usage-alert-state` | 通知済み閾値の記録（ブロックごとにリセット） |
 | `~/.claude/.usage-alert.log` | 実行ログ |
 
@@ -52,7 +52,7 @@ cd claude-usage-discord-alert
 
 # 2. インストール
 #    - usage-alert.sh に実行権限付与
-#    - ~/.claude/usage-alert.conf を雛形から作成（既存なら上書きしない）
+#    - .env を .env.example から作成（既存なら上書きしない）
 #    - テンプレートから実パスを埋めた plist を ~/Library/LaunchAgents/ に生成し launchd へ登録
 sh install.sh
 ```
@@ -65,18 +65,20 @@ sh install.sh
 
 通知に必要な設定は **`DISCORD_WEBHOOK_URL`** と **`TOKEN_BUDGET`** の2つ。
 
-### 方式A: 設定ファイル（launchd常駐ならこちら推奨）
+### 方式A: `.env` ファイル（launchd常駐ならこちら推奨）
 
-`~/.claude/usage-alert.conf` を編集する（`install.sh` が雛形を作成済み）。
+プロジェクト直下の `.env` を編集する（`install.sh` が `.env.example` から作成済み）。
 
 ```sh
+cp .env.example .env   # install.sh 実行済みなら作成済み
+# .env を編集:
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 TOKEN_BUDGET="32793246"      # ← 下記キャリブレーションで算出
 THRESHOLDS="50 80"           # 通知する割合（%）
 ```
 
 > launchd の定期実行はシェルの環境変数を引き継がないため、常駐運用では**この方式が確実**。
-> 設定ファイルの場所を変えたい場合は環境変数 `USAGE_ALERT_CONF` でパス指定できる。
+> `.env` はスクリプトと同じディレクトリに置く。`.gitignore` 済みなのでコミットされない。
 
 ### 方式B: 環境変数（手動実行・CI向け）
 
@@ -121,7 +123,7 @@ tail ~/.claude/.usage-alert.log         # 実行ログ
 THRESHOLDS="1" sh usage-alert.sh        # env方式。1%で発火するので必ず通知が飛ぶ
 ```
 
-> 設定変更（Webhook・閾値・上限）は再読込不要。`usage-alert.conf` を保存すれば次回実行から反映される。
+> 設定変更（Webhook・閾値・上限）は再読込不要。`.env` を保存すれば次回実行から反映される。
 
 ---
 

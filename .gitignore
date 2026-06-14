@@ -1,4 +1,5 @@
 # 秘匿情報・実行時生成物（リポジトリに含めない）
+.env
 usage-alert.conf
 .usage-alert-state
 .usage-alert.log
