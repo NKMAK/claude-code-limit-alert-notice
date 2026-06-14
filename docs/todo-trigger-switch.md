@@ -84,8 +84,9 @@ TRIGGER_HOOK="false"     # Claude Code の Stop フック（応答が返り次�
 
 ## 保留中の未完タスク（本筋とは別）
 
-- [ ] **実通知テスト未実施**: `.env` を設定した状態で
-      `sh usage-alert.sh` を1回走らせると通知が実際にDiscordへ飛ぶはず。要確認。
+- [x] **実通知テスト実施済み(2026-06-14)**: `THRESHOLDS="1" sh usage-alert.sh --source manual`
+      で実スクリプトが exit 0 完走し通知送信。Webhook疎通も HTTP 204 で確認。状態ファイルは
+      テスト前後でバックアップ/復元し汚染なし。
 - [ ] （セキュリティ）設定中に実Webhook URLがチャットに表示された。気になるなら
       Discord側でWebhook再作成→`.env`更新。
 
