@@ -70,6 +70,9 @@ THRESHOLDS=$(printf '%s' "${THRESHOLDS:-}" | tr ',' ' ' | tr ' ' '\n' \
 THRESHOLDS="${THRESHOLDS% }"
 [ -n "$THRESHOLDS" ] || THRESHOLDS="50 80"
 
+# メンション対象(.env の DISCORD_MENTION)。空ならメンションなし(従来動作)。
+DISCORD_MENTION="${DISCORD_MENTION:-}"
+
 # 多重起動防止（macOSにflockが無いのでmkdirで排他）
 mkdir "$LOCKDIR" 2>/dev/null || exit 0
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
@@ -119,8 +122,11 @@ for th in $THRESHOLDS; do
     msg="⚠️ Claude 5h使用量が ${pct}% に到達"
     [ -n "$reset_info" ] && msg="$msg
 $reset_info"
+    # メンション設定があれば本文先頭に付与。allowed_mentions を明示しないと
+    # Webhook ではロール/@everyone が実際に ping されないため必ず付ける。
+    [ -n "$DISCORD_MENTION" ] && msg="$DISCORD_MENTION $msg"
     curl -fsS -m 10 -H "Content-Type: application/json" \
-      -d "$(jq -nc --arg c "$msg" '{content:$c}')" \
+      -d "$(jq -nc --arg c "$msg" '{content:$c, allowed_mentions:{parse:["roles","users","everyone"]}}')" \
       "$DISCORD_WEBHOOK_URL" >/dev/null 2>&1
     fired="${fired:+$fired,}$th"
   fi

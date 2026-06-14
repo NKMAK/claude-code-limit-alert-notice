@@ -82,6 +82,7 @@ cp .env.example .env   # install.sh 実行済みなら作成済み
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 TOKEN_BUDGET="32793246"      # ← 下記キャリブレーションで算出
 THRESHOLDS="50 80"           # 通知する割合（%）。後述の書式参照
+DISCORD_MENTION=""           # メンション対象。空ならなし。後述参照
 TRIGGER_LAUNCHD="true"       # 5分ごとの定期実行で判定する
 TRIGGER_HOOK="false"         # Stopフック（応答直後）で判定する
 ```
@@ -92,6 +93,22 @@ TRIGGER_HOOK="false"         # Stopフック（応答直後）で判定する
 - 各5hブロックで**各閾値につき1回ずつ**通知。3段階なら `THRESHOLDS="50 80 95"`。
 - `1〜99` の整数のみ有効。範囲外・非数値は無視。自動で昇順ソート＆重複除去される。
 - 空/未設定・全部不正なら既定の `"50 80"` にフォールバック。
+
+#### `DISCORD_MENTION`（メンション・任意）
+
+通知の先頭に `@` メンションを付けられる。空ならメンションなし（既定）。
+
+```sh
+DISCORD_MENTION="@everyone"                  # 全員
+DISCORD_MENTION="<@123456789012345678>"      # 特定ユーザー
+DISCORD_MENTION="<@&123456789012345678>"     # 特定ロール
+```
+
+対象IDは Discord の開発者モードをON（設定→詳細設定）にしてから、ユーザー/ロールを
+右クリック →「IDをコピー」で取得する。ロール/@everyone を実際に ping させるための
+`allowed_mentions` はスクリプト側で自動付与される。なお `@everyone` は受信側で
+抑制されやすくデスクトップ通知が出ないことがあるため、自分宛て通知には
+ユーザーメンション `<@自分のID>` が確実。
 
 > launchd の定期実行はシェルの環境変数を引き継がないため、常駐運用では**この方式が確実**。
 > `.env` はスクリプトと同じディレクトリに置く。`.gitignore` 済みなのでコミットされない。
