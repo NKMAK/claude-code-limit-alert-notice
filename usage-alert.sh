@@ -61,7 +61,14 @@ esac
 [ -n "$DISCORD_WEBHOOK_URL" ] || exit 0
 case "$TOKEN_BUDGET" in ''|*[!0-9]*) exit 0 ;; esac
 [ "$TOKEN_BUDGET" -gt 0 ] || exit 0
-: "${THRESHOLDS:=50 80}"
+
+# 閾値の正規化: カンマ区切りも許容(→空白化)、1〜99の整数のみ採用し、
+# 昇順ソート＋重複除去する。不正値・範囲外は黙って捨てる。
+# 結果が空(未設定/全部不正)なら従来どおり既定 "50 80" にフォールバック。
+THRESHOLDS=$(printf '%s' "${THRESHOLDS:-}" | tr ',' ' ' | tr ' ' '\n' \
+  | grep -E '^[0-9]+$' | awk '$1>=1 && $1<=99' | sort -n -u | tr '\n' ' ')
+THRESHOLDS="${THRESHOLDS% }"
+[ -n "$THRESHOLDS" ] || THRESHOLDS="50 80"
 
 # 多重起動防止（macOSにflockが無いのでmkdirで排他）
 mkdir "$LOCKDIR" 2>/dev/null || exit 0
