@@ -32,6 +32,30 @@ launchctl load "$PLIST_DST"
 echo "→ launchd エージェント($LABEL)を登録しました。"
 launchctl list | grep claude-usage-alert || echo "（登録確認に失敗）"
 
+# Claude Code の Stop フックに登録する（応答が返り次第ゲートを通す）。
+# 登録しても TRIGGER_HOOK=false の間は何もしないので副作用なし。実際に効かせる
+# には .env で TRIGGER_HOOK="true" にする。冪等（既登録ならスキップ）。
+SETTINGS="$HOME/.claude/settings.json"
+HOOK_CMD="sh $DIR/usage-alert.sh --source hook"
+if command -v jq >/dev/null 2>&1; then
+  [ -f "$SETTINGS" ] || { mkdir -p "$(dirname "$SETTINGS")"; echo '{}' > "$SETTINGS"; }
+  if jq -e --arg c "$HOOK_CMD" \
+       '[.. | objects | select(.type=="command") | .command] | index($c)' \
+       "$SETTINGS" >/dev/null 2>&1; then
+    echo "→ Stopフックは登録済み（スキップ）。"
+  else
+    cp "$SETTINGS" "$SETTINGS.bak.$(date +%Y%m%d%H%M%S)"
+    tmp="$(mktemp)"
+    jq --arg c "$HOOK_CMD" '
+      .hooks //= {} | .hooks.Stop //= [] |
+      .hooks.Stop += [ { "hooks": [ { "type": "command", "command": $c } ] } ]
+    ' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    echo "→ $SETTINGS に Stopフックを登録しました（有効化は .env の TRIGGER_HOOK=true）。"
+  fi
+else
+  echo "→ jq が無いため Stopフックの自動登録をスキップ。READMEの手順で手動登録してください。"
+fi
+
 echo "完了。次の2つを設定してください:"
 echo "  1) .env の DISCORD_WEBHOOK_URL に Discord Webhook URL を記入"
 echo "  2) TOKEN_BUDGET を自動算出: /usage の%を見て  sh $DIR/calibrate.sh <%>"
