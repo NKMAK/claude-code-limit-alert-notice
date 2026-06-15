@@ -13,6 +13,8 @@
     <array>
         <string>/bin/sh</string>
         <string>__INSTALL_DIR__/usage-alert.sh</string>
+        <string>--source</string>
+        <string>launchd</string>
     </array>
     <key>StartInterval</key>
     <integer>300</integer>
