@@ -1,0 +1,12 @@
+claude-usage-discord-alert リポジトリで作業します。
+statusline（チャット下部UI）に 5h セッション使用率を「公式の正確な値」で表示する機能を実装してください。
+
+まず docs/todo-statusline-5h.md を読んでください。経緯・設計・受け入れ基準・検証コマンドが全部そこにあります。
+
+要点だけ先に:
+- 取得元は claude -p "/usage" --output-format json（サーバー側の正規値・課金トークン消費ゼロ）。背景は docs/decisions/0001-use-claude-usage-as-data-source.md。
+- statusline は再描画ごとに走るので claude -p を直叩きしない。キャッシュ方式にする。
+- usage-alert.sh は既に /usage を取得・パース済み（L85-101）で、launchd が5分おきに実行している。この既存fetchに相乗りして ~/.claude/usage-cache.json を書く（DRY、/usage呼び出しを二重化しない）。
+- statusline 本体は ~/.claude/statusline-command.sh（現状 "Model | Ctx XX%"）。ここでキャッシュを読んで "5h NN%" を足す。settings.json の statusLine.command は既にこのスクリプトを指しているので設定変更は不要。
+
+実装前に、現在のブランチ状態（develop に未コミット変更あり）を確認し、この作業を載せるブランチ方針をユーザーに確認してから着手してください。完了したら docs/todo-statusline-5h.md は削除し、必要なら docs/decisions/ にADRを追加、README/article を更新してください。
