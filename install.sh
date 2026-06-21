@@ -10,15 +10,16 @@ ENV_FILE="$DIR/.env"
 TEMPLATE="$DIR/local.claude-usage-alert.plist.template"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-chmod +x "$DIR/usage-alert.sh" "$DIR/calibrate.sh"
+chmod +x "$DIR/usage-alert.sh"
 
-# 固定バージョンの ccusage を初回のみ取得（以後ネット不要・自動更新なし）
-echo "→ 依存(ccusage 固定版)をインストール中..."
-( cd "$DIR" && npm install --no-audit --no-fund )
+# 実行に必要なコマンドを確認（使用率は `claude -p "/usage"` から取得し、jq で整形）。
+for cmd in claude jq curl; do
+  command -v "$cmd" >/dev/null 2>&1 || echo "→ 警告: '$cmd' が見つかりません。$cmd を導入してください。"
+done
 
 if [ ! -f "$ENV_FILE" ]; then
   cp "$DIR/.env.example" "$ENV_FILE"
-  echo "→ $ENV_FILE を作成しました。DISCORD_WEBHOOK_URL と TOKEN_BUDGET を設定してください。"
+  echo "→ $ENV_FILE を作成しました。DISCORD_WEBHOOK_URL を設定してください。"
 else
   echo "→ $ENV_FILE は既に存在（上書きしません）。"
 fi
@@ -56,7 +57,7 @@ else
   echo "→ jq が無いため Stopフックの自動登録をスキップ。READMEの手順で手動登録してください。"
 fi
 
-echo "完了。次の2つを設定してください:"
-echo "  1) .env の DISCORD_WEBHOOK_URL に Discord Webhook URL を記入"
-echo "  2) TOKEN_BUDGET を自動算出: /usage の%を見て  sh $DIR/calibrate.sh <%>"
+echo "完了。次を設定してください:"
+echo "  - .env の DISCORD_WEBHOOK_URL に Discord Webhook URL を記入"
+echo "    （使用率は claude -p \"/usage\" から自動取得。TOKEN_BUDGET 校正は不要）"
 echo "動作確認: sh $DIR/usage-alert.sh"

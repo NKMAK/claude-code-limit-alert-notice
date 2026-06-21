@@ -5,8 +5,10 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 - 監視のトリガーは2種類。**`.env` のフラグで個別にON/OFF**できる（両方ON可）
   - **launchd**（macOS標準のスケジューラ）が5分おきに実行 … 長いターンの途中でも拾える
   - Claude Code の **Stop フック** … 応答が返り次第その場で判定（即時性が高い）
-- 使用量の集計は **[ccusage](https://github.com/ryoppippi/ccusage)**（第三者製のnpmツール）を利用
-- 同一マシン上の**全セッション分のログを合算**して評価する
+- 使用率は **`claude -p "/usage"`** から Claude Code 本体と同じ**サーバー側の正確な値**
+  （セッション使用率・実リセット時刻・週間使用率）を取得する。この呼び出しは
+  ローカル処理(synthetic)で**課金トークンを消費しない**
+- 通知には**正確な使用率・実リセット時刻・週間使用率**を載せる
 
 > ⚠️ 仕組み・設計判断の詳細な経緯は [docs/article.md](docs/article.md) を参照。
 
@@ -16,12 +18,10 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 
 | ファイル | 役割 |
 |---|---|
-| `usage-alert.sh` | 本体。ccusageで5h消費トークンを取得→閾値判定→Discord通知 |
+| `usage-alert.sh` | 本体。`claude -p "/usage"` で使用率を取得→閾値判定→Discord通知 |
 | `local.claude-usage-alert.plist.template` | launchd登録用テンプレート（install.shが実パスを埋めて生成） |
-| `.env.example` | 設定サンプル（`.env` にコピーして使う / Webhook URL・上限トークン） |
+| `.env.example` | 設定サンプル（`.env` にコピーして使う / Webhook URL ほか） |
 | `install.sh` | 設定配置＋launchd登録の自動化 |
-| `calibrate.sh` | `TOKEN_BUDGET` を自動算出して `.env` に書き込む（`/usage` の数字を1つ渡すだけ） |
-| `package.json` | `ccusage` を**固定バージョン**で管理（`npm install` で初回取得） |
 | `docs/article.md` | 記事用のまとめ（背景・調査・設計判断） |
 
 実行時に生成されるファイル（いずれも `.gitignore` 済み）:
@@ -29,7 +29,7 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 | パス | 役割 |
 |---|---|
 | `.env` | 設定の実体（**Webhook URLを含むので非git管理**。`.env.example` からコピー） |
-| `~/.claude/.usage-alert-state` | 通知済み閾値の記録（ブロックごとにリセット） |
+| `~/.claude/.usage-alert-state` | 通知済み閾値の記録（5hウィンドウごとにリセット） |
 | `~/.claude/.usage-alert.log` | 実行ログ |
 
 ---
@@ -37,11 +37,10 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 ## 前提条件
 
 - **macOS**（スケジューラに launchd を使用）
-- **Node.js / npm**（`ccusage` を**固定バージョンでローカル導入**。`node -v` で確認）
-  - 初回 `npm install`（= `install.sh`）で1度だけ取得。以後はネット不要・自動更新なし。
+- **Claude Code (`claude` CLI)** に**ログイン済み**であること（`claude -p "/usage"` で
+  使用率を取得するため。サブスク/トークン認証が有効な状態）
 - **jq**（JSON処理。`jq --version` で確認。無ければ `brew install jq`）
 - **curl**（macOS標準で同梱）
-- **Claude Code** を当該マシンで使用していること（`~/.claude/projects/**` にログが溜まる）
 - Discord の **Webhook URL**（通知先チャンネルの「連携サービス」→「ウェブフック」から作成）
 
 > ビルド（コンパイル）は不要。POSIX shスクリプトなので、配置して権限を付けるだけで動く。
@@ -56,7 +55,7 @@ git clone <このリポジトリのURL> claude-usage-discord-alert
 cd claude-usage-discord-alert
 
 # 2. インストール
-#    - 固定バージョンの ccusage を npm install（初回のみネット使用）
+#    - 必要コマンド(claude/jq/curl)の存在チェック
 #    - スクリプトに実行権限付与
 #    - .env を .env.example から作成（既存なら上書きしない）
 #    - テンプレートから実パスを埋めた plist を ~/Library/LaunchAgents/ に生成し launchd へ登録
@@ -70,7 +69,8 @@ sh install.sh
 
 ## 設定（2方式・どちらか）
 
-通知に必要な設定は **`DISCORD_WEBHOOK_URL`** と **`TOKEN_BUDGET`** の2つ。
+通知に必要な設定は **`DISCORD_WEBHOOK_URL`** だけ（使用率は `/usage` から取得するので
+トークン上限の校正は不要）。
 
 ### 方式A: `.env` ファイル（launchd常駐ならこちら推奨）
 
@@ -80,7 +80,6 @@ sh install.sh
 cp .env.example .env   # install.sh 実行済みなら作成済み
 # .env を編集:
 DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
-TOKEN_BUDGET="32793246"      # ← 下記キャリブレーションで算出
 THRESHOLDS="50 80"           # 通知する割合（%）。後述の書式参照
 DISCORD_MENTION=""           # メンション対象。空ならなし。後述参照
 TRIGGER_LAUNCHD="true"       # 5分ごとの定期実行で判定する
@@ -90,7 +89,7 @@ TRIGGER_HOOK="false"         # Stopフック（応答直後）で判定する
 #### `THRESHOLDS`（通知する割合）の書式
 
 - スペース区切り（推奨）かカンマ区切りのどちらでも可: `"50 80 95"` / `"50,80,95"`
-- 各5hブロックで**各閾値につき1回ずつ**通知。3段階なら `THRESHOLDS="50 80 95"`。
+- 各5hウィンドウで**各閾値につき1回ずつ**通知。3段階なら `THRESHOLDS="50 80 95"`。
 - `1〜99` の整数のみ有効。範囲外・非数値は無視。自動で昇順ソート＆重複除去される。
 - 空/未設定・全部不正なら既定の `"50 80"` にフォールバック。
 
@@ -119,37 +118,13 @@ DISCORD_MENTION="<@&123456789012345678>"     # 特定ロール
 
 ```sh
 export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
-export TOKEN_BUDGET=32793246
 export THRESHOLDS="50 80"
 sh usage-alert.sh
 ```
 
-### TOKEN_BUDGET のキャリブレーション（1回だけ）
-
-`TOKEN_BUDGET` は **「5hで使い切れるトークン数の目安」＝あなたにとっての100%**。
-使用率は `消費トークン ÷ TOKEN_BUDGET × 100` で計算される。本物の5h上限は
-Anthropic非公開なので、`/usage` の表示と実トークンを1回だけ突き合わせて逆算する。
-
-#### かんたん: `calibrate.sh`（推奨）
-
-数字を1つ入れるだけ。計算と `.env` への書き込みは自動。
-
-```sh
-# 1. Claude Code で /usage を実行し、5h使用率(%)を確認（例: 30）
-# 2. その数字を渡す（対話入力でも可: 引数なしで sh calibrate.sh）
-sh calibrate.sh 30
-# → 現在の消費トークンを ccusage から取得し、TOKEN_BUDGET を計算して .env に保存
-```
-
-#### 手動でやる場合
-
-```sh
-node_modules/.bin/ccusage blocks --active --json --offline --since $(date -v-1d +%Y%m%d) | jq '.blocks[0].totalTokens'
-# TOKEN_BUDGET = totalTokens ÷ (％ / 100)
-# 例) totalTokens=9837974, /usage=30% → 9837974 / 0.30 ≒ 32793246 を .env に記入
-```
-
-> 体感とズレてきたら、また `/usage` を見て `calibrate.sh` を再実行すれば直る。
+> 使用率は `claude -p "/usage"` から取得する正確な値なので、以前必要だった
+> `TOKEN_BUDGET` の校正（`calibrate.sh`）は不要になった。`.env` に `TOKEN_BUDGET` が
+> 残っていても単に無視される。
 
 ---
 
@@ -195,13 +170,13 @@ TRIGGER_HOOK="false"      # Claude Code の Stop フック（応答が返り次�
 
 ## 使い方・動作確認
 
-設定が済めば、あとは **launchd が5分おきに自動チェック**するので操作は不要。閾値（50% / 80%）に達した時点で Discord に通知が届く。各閾値は **5hブロックごとに1回だけ**通知し、ブロックが切り替われば自動でリセットされる。
+設定が済めば、あとは **launchd が5分おきに自動チェック**するので操作は不要。閾値（50% / 80%）に達した時点で Discord に通知が届く。各閾値は **5hウィンドウごとに1回だけ**通知し、リセット時刻が変わって新しいウィンドウになれば自動でリセットされる。
 
 手動で1回チェックする / 動作を確認する:
 
 ```sh
 sh usage-alert.sh                       # 1回だけ判定を実行
-cat ~/.claude/.usage-alert-state        # 「ブロックID 発火済み閾値」が記録される
+cat ~/.claude/.usage-alert-state        # 「ウィンドウID 発火済み閾値」が記録される
 tail ~/.claude/.usage-alert.log         # 実行ログ
 ```
 
@@ -211,7 +186,7 @@ tail ~/.claude/.usage-alert.log         # 実行ログ
 THRESHOLDS="1" sh usage-alert.sh        # env方式。1%で発火するので必ず通知が飛ぶ
 ```
 
-> 設定変更（Webhook・閾値・上限）は再読込不要。`.env` を保存すれば次回実行から反映される。
+> 設定変更（Webhook・閾値）は再読込不要。`.env` を保存すれば次回実行から反映される。
 
 ---
 
@@ -230,7 +205,11 @@ Stopフックも外す場合は `~/.claude/settings.json` の `hooks.Stop` か�
 
 ## 既知の制約
 
-- **このマシンのClaude Code消費のみ**カウント。Web版 / 別PC / デスクトップアプリ / API併用分は
-  ローカルログに残らないため拾えず、そのぶん過少になる。
-- %はキャリブレーション値に基づく**近似**であり、`/usage` の公式表示と完全一致はしない。
-- ccusage は第三者ツール。仕様変更・非メンテのリスクはゼロではない（自前のjq集計に置換も可能）。
+- 使用率・リセット時刻は `claude -p "/usage"` 由来＝**Claude Code 本体と同じサーバー側の値**
+  なので、`/usage` の表示と一致する（旧方式のような校正ズレはない）。
+- **`claude` CLI のログインが必要**。未ログイン/認証切れだと `/usage` を取得できず、
+  その場合は誤通知を避けて黙って何もしない。
+- `/usage` の出力テキスト書式に依存してパースしている。Claude Code の更新で書式が
+  変わると拾えなくなる可能性がある（その場合も誤通知はせず無言終了）。
+- 通知が出るタイミングは launchd の実行間隔（既定5分）に依存するため、閾値到達から
+  最大で数分の遅れが出る。即時性を上げたい場合は Stop フック（`TRIGGER_HOOK`）を併用する。
