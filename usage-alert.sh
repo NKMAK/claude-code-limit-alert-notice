@@ -1,21 +1,28 @@
 #!/bin/sh
-# Claude Code の直近5hブロック使用量を ccusage で集計し、
+# Claude Code の現在の5h(セッション)使用率を `claude -p "/usage"` から取得し、
 # 設定した閾値(50/80%)を超えたら Discord Webhook に通知する。
-# launchd（定期実行）または Stop フック（応答直後）から呼ばれる想定。
+# launchd（定期実行）または Stop フックから呼ばれる想定。
 # どのトリガーで実際に動くかは .env の TRIGGER_LAUNCHD / TRIGGER_HOOK で切替える
-# （呼び出し元は --source で受け取る）。全セッション分のログを合算するため
-# 同一マシン上の複数セッションはまとめて評価される。
+# （呼び出し元は --source で受け取る）。
+#
+# データ源について:
+#   `claude -p "/usage" --output-format json` は Claude Code 本体と同じ
+#   サーバー側のレート制限値（セッション使用率・実リセット時刻・週間使用率）を
+#   返す。これはローカル処理(synthetic)で課金トークンを消費しない。
+#   以前は ccusage のトークン総数÷TOKEN_BUDGET で近似していたが、実上限は
+#   トークン数に正比例せず校正がすぐズレたため、正確な /usage に全面移行した。
 #
 # 設定の渡し方（優先順位の高い順）:
-#   1. 既に export 済みの環境変数（DISCORD_WEBHOOK_URL / TOKEN_BUDGET / THRESHOLDS）
+#   1. 既に export 済みの環境変数（DISCORD_WEBHOOK_URL / THRESHOLDS / DISCORD_MENTION）
 #   2. スクリプトと同じ場所の .env ファイル（.env.example をコピーして作る）
 #   3. 互換: ~/.claude/usage-alert.conf（USAGE_ALERT_CONF で場所を変更可）
 # .env / conf は .gitignore 済みでリポジトリに含めない。
 
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+# claude は ~/.local/bin に入ることが多いので PATH に含める。
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 # 呼び出し元(source)を判定する。既定は manual（手動/テスト）。
-#   --source launchd : 5分ごとの定期実行（.env の TRIGGER_LAUNCHD で有効/無効）
+#   --source launchd : 定期実行（.env の TRIGGER_LAUNCHD で有効/無効）
 #   --source hook    : Claude Code の Stop フック（.env の TRIGGER_HOOK で有効/無効）
 #   --source manual  : 人間が直接実行。フラグに関係なく常に動く（テスト用の抜け道）
 SOURCE="manual"
@@ -38,13 +45,13 @@ STATE="$HOME/.claude/.usage-alert-state"
 LOCKDIR="$HOME/.claude/.usage-alert.lock.d"
 
 # 既存の環境変数を最優先にしつつ、未設定分を .env → conf の順で補完する
-_pre_webhook="$DISCORD_WEBHOOK_URL"; _pre_budget="$TOKEN_BUDGET"; _pre_th="$THRESHOLDS"
+_pre_webhook="$DISCORD_WEBHOOK_URL"; _pre_th="$THRESHOLDS"; _pre_mention="$DISCORD_MENTION"
 if [ -f "$ENV_FILE" ]; then . "$ENV_FILE"
 elif [ -f "$CONF" ]; then . "$CONF"
 fi
 [ -n "$_pre_webhook" ] && DISCORD_WEBHOOK_URL="$_pre_webhook"
-[ -n "$_pre_budget" ]  && TOKEN_BUDGET="$_pre_budget"
 [ -n "$_pre_th" ]      && THRESHOLDS="$_pre_th"
+[ -n "$_pre_mention" ] && DISCORD_MENTION="$_pre_mention"
 
 # トリガー別のON/OFFを .env のフラグで判定する。
 # 未設定時の既定: launchd=ON（従来動作の互換）, hook=OFF。
@@ -59,8 +66,6 @@ esac
 
 # 設定が未完なら何もしない（誤通知防止）
 [ -n "$DISCORD_WEBHOOK_URL" ] || exit 0
-case "$TOKEN_BUDGET" in ''|*[!0-9]*) exit 0 ;; esac
-[ "$TOKEN_BUDGET" -gt 0 ] || exit 0
 
 # 閾値の正規化: カンマ区切りも許容(→空白化)、1〜99の整数のみ採用し、
 # 昇順ソート＋重複除去する。不正値・範囲外は黙って捨てる。
@@ -77,37 +82,52 @@ DISCORD_MENTION="${DISCORD_MENTION:-}"
 mkdir "$LOCKDIR" 2>/dev/null || exit 0
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
-# 固定バージョンのローカル ccusage を使用（npxの毎回更新・ネット問い合わせを排除）。
-# --offline: 料金データ取得をしない（本ツールはtotalTokensしか使わない）
-# --since 昨日: 走査対象を直近に限定（履歴肥大対策）
-CCUSAGE="$SCRIPT_DIR/node_modules/.bin/ccusage"
-[ -x "$CCUSAGE" ] || { echo "ccusage未導入: $SCRIPT_DIR で 'npm install' を実行してください" >&2; exit 0; }
-SINCE=$(date -v-1d +%Y%m%d 2>/dev/null || date +%Y%m%d)
+# claude CLI から /usage の生テキストを取得する。
+# --output-format json で機械可読化し、result フィールドの本文を取り出す。
+command -v claude >/dev/null 2>&1 || exit 0
+raw=$(claude -p "/usage" --output-format json 2>/dev/null \
+  | jq -r '.[] | select(.type=="result") | .result' 2>/dev/null)
+[ -n "$raw" ] || exit 0
 
-json=$("$CCUSAGE" blocks --active --json --offline --since "$SINCE" 2>/dev/null)
-[ -n "$json" ] || exit 0
+# 例: "Current session: 82% used · resets Jun 21 at 7:30pm (Asia/Tokyo)"
+sess_line=$(printf '%s\n' "$raw" | grep -i 'Current session:' | head -1)
+# 例: "Current week (all models): 13% used · resets Jun 24 at 2pm (Asia/Tokyo)"
+week_line=$(printf '%s\n' "$raw" | grep -i 'Current week'    | head -1)
 
-block_id=$(printf '%s' "$json" | jq -r '.blocks[0].id // empty')
-total=$(printf '%s' "$json" | jq -r '.blocks[0].totalTokens // 0')
-[ -n "$block_id" ] || exit 0   # アクティブな5hブロックなし
+# 使用率(整数%)を取り出す。取れなければ誤通知を避けて終了。
+pct=$(printf '%s' "$sess_line"  | grep -oE '[0-9]+% used' | head -1 | grep -oE '[0-9]+')
+case "$pct" in ''|*[!0-9]*) exit 0 ;; esac
 
-pct=$(awk -v t="$total" -v b="$TOKEN_BUDGET" 'BEGIN{ printf "%.0f", t*100/b }')
+week_pct=$(printf '%s' "$week_line" | grep -oE '[0-9]+% used' | head -1 | grep -oE '[0-9]+')
 
-# 注: 以前は ccusage の blocks[0].endTime から「リセットまで残りN時間」を表示していたが、
-# これは ccusage の集計ブロック終端(最初の利用時刻を正時切り下げ+5h)であって、
-# Claude のサーバー側実リセット(分単位・ログ非保存)とは一致しないため誤解を招く。
-# ローカルに実リセット時刻は保存されておらず正確に再現できないので、表示しない。
+# 実リセット時刻（タイムゾーン括弧を落として表示用に整える）。
+# 例: "Jun 21 at 7:30pm"
+sess_reset=$(printf '%s' "$sess_line" | sed -E 's/.*· *resets +//; s/ *\(.*\)$//')
 
-# 状態ファイル形式: "<blockId> <発火済み閾値カンマ区切り>"
+# 通知済みかの判定単位(window)はリセット時刻。リセット時刻が変われば新しい5h
+# ウィンドウ＝発火履歴をリセットする。ただし /usage の表示は分が±1分ゆらぐ
+# こと(例 7:30pm⇔7:29pm)があるため、判定キーは「分」を落として時(hour)単位に
+# 丸める（隣接ウィンドウは5h差なので時+日付の衝突は起きない）。表示用の
+# sess_reset は分まで正確なまま使う。状態ファイルは空白区切り2列なので
+# window_id は空白を含まないよう正規化する。
+window_id=$(printf '%s' "$sess_reset" | sed -E 's/:[0-9]{2}//' \
+  | tr ' ' '_' | tr -cd 'A-Za-z0-9:_')
+[ -n "$window_id" ] || window_id="unknown"
+
+# 状態ファイル形式: "<windowId> <発火済み閾値カンマ区切り>"
 saved_id=$(cut -d' ' -f1 "$STATE" 2>/dev/null)
 saved_fired=$(cut -d' ' -f2 "$STATE" 2>/dev/null)
-[ "$saved_id" = "$block_id" ] || saved_fired=""   # 新ブロックならリセット
+[ "$saved_id" = "$window_id" ] || saved_fired=""   # 新ウィンドウなら発火履歴リセット
 
 fired="$saved_fired"
 for th in $THRESHOLDS; do
   if [ "$pct" -ge "$th" ] 2>/dev/null && ! printf ',%s,' "$fired" | grep -q ",$th,"; then
-    # 本文: 使用率のみ。トークン数・閾値・リセット時刻は出さない。
+    # 本文: 正確なセッション使用率＋実リセット時刻＋（取れれば）週間使用率。
     msg="⚠️ Claude 5h使用量が ${pct}% に到達"
+    [ -n "$sess_reset" ] && msg="$msg
+リセット: ${sess_reset}"
+    [ -n "$week_pct" ]   && msg="$msg
+週(全モデル): ${week_pct}%"
     # メンション設定があれば本文先頭に付与。allowed_mentions を明示しないと
     # Webhook ではロール/@everyone が実際に ping されないため必ず付ける。
     [ -n "$DISCORD_MENTION" ] && msg="$DISCORD_MENTION $msg"
@@ -118,4 +138,4 @@ for th in $THRESHOLDS; do
   fi
 done
 
-printf '%s %s\n' "$block_id" "$fired" > "$STATE"
+printf '%s %s\n' "$window_id" "$fired" > "$STATE"
