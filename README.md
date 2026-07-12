@@ -12,6 +12,18 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 
 > ⚠️ 仕組み・設計判断の詳細な経緯は [docs/article.md](docs/article.md) を参照。
 
+## 動作環境
+
+| 項目 | 要件 |
+|---|---|
+| OS | **macOS**（スケジューラに launchd、ビルドに Xcode Command Line Tools を使用。Linux/Windows 非対応） |
+| Claude | **Claude Code (`claude` CLI)** ログイン済み（サブスクの使用量制限がある Pro/Max プラン向け） |
+| 通知先 | **Discord**（Webhook を作成できるサーバー/チャンネル） |
+| その他 | `jq`（`brew install jq`）、`curl`（macOS 標準） |
+
+対話セットアップ（`/setup` スキル）を使う場合も Claude Code 上で動くため、追加の環境は不要。
+詳細は後述の[前提条件](#前提条件)を参照。
+
 ---
 
 ## 構成
