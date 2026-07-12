@@ -104,6 +104,22 @@ week_pct=$(printf '%s' "$week_line" | grep -oE '[0-9]+% used' | head -1 | grep -
 # 例: "Jun 21 at 7:30pm"
 sess_reset=$(printf '%s' "$sess_line" | sed -E 's/.*· *resets +//; s/ *\(.*\)$//')
 
+# リセット時刻を日本語・24時間表記へ整形する（例 "Jun 21 at 7:30pm" → "6月21日 19:30"）。
+# /usage の英語表記は年を含まないため date は当年扱いになる。年跨ぎ（12/31深夜に
+# 翌年1/1のリセットを見る場合）は約1年過去と誤解釈されるので、1日以上過去なら
+# 翌年として取り直す。パースできなければ英語のまま返す（通知を壊さない）。
+format_reset_ja() {
+  # 分なし表記("7pm"等)は date が分を現在時刻で埋めてしまうため、先に ":00" を補う。
+  _r=$(printf '%s' "$1" | sed -E 's/at ([0-9]{1,2})([AaPp][Mm])$/at \1:00\2/')
+  _e=$(LC_ALL=C date -j -f "%b %d at %I:%M%p" "$_r" +%s 2>/dev/null) || _e=""
+  if [ -n "$_e" ] && [ "$_e" -lt $(( $(date +%s) - 86400 )) ]; then
+    _y=$(( $(date +%Y) + 1 ))
+    _e=$(LC_ALL=C date -j -f "%Y %b %d at %I:%M%p" "$_y $_r" +%s 2>/dev/null) || _e=""
+  fi
+  if [ -n "$_e" ]; then date -r "$_e" "+%-m月%-d日 %H:%M"; else printf '%s' "$1"; fi
+}
+sess_reset_disp=$(format_reset_ja "$sess_reset")
+
 # 通知済みかの判定単位(window)はリセット時刻。リセット時刻が変われば新しい5h
 # ウィンドウ＝発火履歴をリセットする。ただし /usage の表示は分が±1分ゆらぐ
 # こと(例 7:30pm⇔7:29pm)があるため、判定キーは「分」を落として時(hour)単位に
@@ -124,8 +140,8 @@ for th in $THRESHOLDS; do
   if [ "$pct" -ge "$th" ] 2>/dev/null && ! printf ',%s,' "$fired" | grep -q ",$th,"; then
     # 本文: 正確なセッション使用率＋実リセット時刻＋（取れれば）週間使用率。
     msg="⚠️ Claude 5h使用量が ${pct}% に到達"
-    [ -n "$sess_reset" ] && msg="$msg
-リセット: ${sess_reset}"
+    [ -n "$sess_reset_disp" ] && msg="$msg
+リセット: ${sess_reset_disp}"
     [ -n "$week_pct" ]   && msg="$msg
 週(全モデル): ${week_pct}%"
     # メンション設定があれば本文先頭に付与。allowed_mentions を明示しないと
