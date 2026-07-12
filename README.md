@@ -53,6 +53,21 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 
 ## 導入手順（build / install）
 
+### Claude Code で対話セットアップ（推奨）
+
+このリポジトリを clone して Claude Code で開き、`/setup` を実行すると、
+使い方のヒアリング（閾値・メンション・トリガー）→ `.env` 生成 → `install.sh` 実行 →
+実通知テストまでを対話形式で進められる。Discord Webhook の作り方や
+フルディスクアクセスの付与手順もその場で案内される。
+
+```sh
+git clone <このリポジトリのURL> claude-usage-discord-alert
+cd claude-usage-discord-alert
+claude   # Claude Code を起動して「/setup」を実行
+```
+
+### 手動セットアップ
+
 ```sh
 # 1. 取得（任意の場所へ）
 git clone <このリポジトリのURL> claude-usage-discord-alert
