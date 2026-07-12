@@ -19,6 +19,7 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 | ファイル | 役割 |
 |---|---|
 | `usage-alert.sh` | 本体。`claude -p "/usage"` で使用率を取得→閾値判定→Discord通知 |
+| `launchd-runner.c` | launchd起点の安定ラッパー（macOS 26 のTCC許可ダイアログ対策。詳細はファイル冒頭コメント） |
 | `local.claude-usage-alert.plist.template` | launchd登録用テンプレート（install.shが実パスを埋めて生成） |
 | `.env.example` | 設定サンプル（`.env` にコピーして使う / Webhook URL ほか） |
 | `install.sh` | 設定配置＋launchd登録の自動化 |
@@ -29,6 +30,7 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
 | パス | 役割 |
 |---|---|
 | `.env` | 設定の実体（**Webhook URLを含むので非git管理**。`.env.example` からコピー） |
+| `bin/usage-alert-runner` | launchd-runner.c のビルド成果物（install.sh が生成・ad-hoc署名） |
 | `~/.claude/.usage-alert-state` | 通知済み閾値の記録（5hウィンドウごとにリセット） |
 | `~/.claude/.usage-alert.log` | 実行ログ |
 
@@ -41,9 +43,11 @@ Claude Code の **5時間ローリング使用量**が一定の割合（既定�
   使用率を取得するため。サブスク/トークン認証が有効な状態）
 - **jq**（JSON処理。`jq --version` で確認。無ければ `brew install jq`）
 - **curl**（macOS標準で同梱）
+- **cc（Xcode Command Line Tools）**（launchd用ラッパーのビルドに使用。無ければ `xcode-select --install`）
 - Discord の **Webhook URL**（通知先チャンネルの「連携サービス」→「ウェブフック」から作成）
 
-> ビルド（コンパイル）は不要。POSIX shスクリプトなので、配置して権限を付けるだけで動く。
+> 本体は POSIX shスクリプト。コンパイルが要るのは launchd 用の小さなラッパー
+> （`launchd-runner.c`）1ファイルだけで、`install.sh` が自動でビルドする。
 
 ---
 
@@ -58,12 +62,29 @@ cd claude-usage-discord-alert
 #    - 必要コマンド(claude/jq/curl)の存在チェック
 #    - スクリプトに実行権限付与
 #    - .env を .env.example から作成（既存なら上書きしない）
+#    - launchd用ラッパー bin/usage-alert-runner をビルド＋ad-hoc署名
 #    - テンプレートから実パスを埋めた plist を ~/Library/LaunchAgents/ に生成し launchd へ登録
 #    - ~/.claude/settings.json の Stop フックに登録（TRIGGER_HOOK=true で有効化）
 sh install.sh
 ```
 
 `install.sh` 実行後、`launchctl list | grep claude-usage-alert` に `local.claude-usage-alert` が出れば登録成功（5分おきに自動実行される）。
+
+### macOS 26 (Tahoe) 以降: フルディスクアクセスの付与（推奨）
+
+macOS 26 の「アプリのデータ保護」により、launchd 経由の `claude -p` 実行時に
+「**ほかのアプリからのデータへのアクセス**」の許可ダイアログが出ることがある。
+出ないようにするには、**システム設定 → プライバシーとセキュリティ → フルディスクアクセス**
+で「＋」→ `Cmd+Shift+G` でリポジトリ内の `bin/usage-alert-runner` を指定して追加・ONにする。
+
+- launchd の起点をこの安定ラッパーにしているため、**許可は1回で恒久化**される。
+  `/bin/sh` 起点だと許可が claude 本体（バージョンごとに別ファイル）に紐づき、
+  Claude Code の自動更新のたびにダイアログが再出現してしまう
+  （背景: [anthropics/claude-code#36832](https://github.com/anthropics/claude-code/issues/36832)）。
+- 付与しない場合も、初回に出るダイアログ（要求元「usage-alert-runner」）を
+  一度「許可」すれば以後は出ない。
+- `.env` の `DISCORD_WEBHOOK_URL` が未設定の間は claude を呼ばないため、
+  install 直後〜この付与までの間にダイアログが出ることはない。
 
 ---
 
@@ -201,6 +222,9 @@ Stopフックも外す場合は `~/.claude/settings.json` の `hooks.Stop` か�
 `usage-alert.sh --source hook` のエントリを削除する（または一時的に止めたいだけ
 なら `.env` で `TRIGGER_HOOK="false"`）。
 
+フルディスクアクセスに `bin/usage-alert-runner` を追加していた場合は、
+システム設定 → プライバシーとセキュリティ → フルディスクアクセス から削除する。
+
 ---
 
 ## 既知の制約
@@ -213,3 +237,6 @@ Stopフックも外す場合は `~/.claude/settings.json` の `hooks.Stop` か�
   変わると拾えなくなる可能性がある（その場合も誤通知はせず無言終了）。
 - 通知が出るタイミングは launchd の実行間隔（既定5分）に依存するため、閾値到達から
   最大で数分の遅れが出る。即時性を上げたい場合は Stop フック（`TRIGGER_HOOK`）を併用する。
+- `launchd-runner.c` を変更して再ビルドすると署名（cdhash）が変わり、TCC 上は別バイナリ
+  扱いになるため**フルディスクアクセスの付与し直しが必要**（`install.sh` はソース変更時
+  のみ再ビルドし、無駄に署名を変えない）。スクリプト側の変更だけなら再ビルド不要。

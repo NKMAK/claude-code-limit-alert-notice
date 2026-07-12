@@ -8,3 +8,4 @@ usage-alert.conf
 .usage-alert.log
 .usage-alert.lock.d/
 .DS_Store
+bin/

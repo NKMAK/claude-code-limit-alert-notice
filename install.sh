@@ -24,6 +24,20 @@ else
   echo "→ $ENV_FILE は既に存在（上書きしません）。"
 fi
 
+# launchd 用ラッパーバイナリをビルドする（理由は launchd-runner.c 冒頭コメント）。
+# ソース/パスが変わったときだけ再ビルド。再ビルドすると署名が変わり TCC の
+# 許可(フルディスクアクセス等)の取り直しが必要になるため、無駄に作り直さない。
+RUNNER="$DIR/bin/usage-alert-runner"
+if [ ! -x "$RUNNER" ] || [ "$DIR/launchd-runner.c" -nt "$RUNNER" ]; then
+  command -v cc >/dev/null 2>&1 || { echo "→ エラー: cc が見つかりません。Xcode Command Line Tools を導入してください。"; exit 1; }
+  mkdir -p "$DIR/bin"
+  cc -O2 -DSCRIPT_PATH="\"$DIR/usage-alert.sh\"" -o "$RUNNER" "$DIR/launchd-runner.c"
+  codesign -s - -f "$RUNNER"
+  echo "→ $RUNNER をビルドしました。TCC の許可(フルディスクアクセス)は付与し直しが必要です。"
+else
+  echo "→ $RUNNER は最新（再ビルドせず署名を維持）。"
+fi
+
 # テンプレートのプレースホルダを実パスに置換して plist 生成
 # （ユーザー名や絶対パスをリポジトリに残さないための仕組み）
 sed -e "s|__INSTALL_DIR__|$DIR|g" -e "s|__HOME__|$HOME|g" "$TEMPLATE" > "$PLIST_DST"

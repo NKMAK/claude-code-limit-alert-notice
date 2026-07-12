@@ -9,12 +9,16 @@
 <dict>
     <key>Label</key>
     <string>local.claude-usage-alert</string>
+    <!--
+      /bin/sh 直起動ではなく自前のラッパーバイナリを起点にする。
+      macOS 26 のTCC(アプリのデータ保護)は launchd ジョブの最初の非Apple製
+      バイナリに許可を紐づけるため、sh 起動だと claude 本体(バージョンごとに
+      別ファイル)に帰属し、自動更新のたびに許可ダイアログが再出現する。
+      安定したラッパーなら許可は1回で恒久化される。詳細は launchd-runner.c。
+    -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/sh</string>
-        <string>__INSTALL_DIR__/usage-alert.sh</string>
-        <string>--source</string>
-        <string>launchd</string>
+        <string>__INSTALL_DIR__/bin/usage-alert-runner</string>
     </array>
     <key>StartInterval</key>
     <integer>300</integer>
